@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Find My Parked Car</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
+  <style>
+    body {
+      background: #1e1e1e;
+      color: #fff;
+      font-family: 'Segoe UI', sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    h1 {
+      margin: 20px 0;
+    }
+
+    #controls {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 15px;
+    }
+
+    button, input {
+      background: #333;
+      color: #fff;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 5px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #555;
+    }
+
+    input[type="file"] {
+      padding: 7px;
+    }
+
+    #map {
+      width: 90%;
+      height: 400px;
+      border-radius: 10px;
+      margin-bottom: 20px;
+    }
+
+    img {
+      max-width: 90%;
+      max-height: 200px;
+      margin-bottom: 20px;
+      border-radius: 10px;
+      border: 2px solid #444;
+    }
+  </style>
+</head>
+<body>
+  <h1>Find My Parked Car</h1>
+  <div id="controls">
+    <button onclick="saveCarLocation()">Save Location</button>
+    <button onclick="findCar()">Find Car</button>
+    <button onclick="toggleMap()">Toggle Map Type</button>
+    <label>
+      Upload Pic
+      <input type="file" accept="image/*" onchange="saveImage(event)">
+    </label>
+  </div>
+  <div id="map"></div>
+  <img id="carImage" alt="No image uploaded" />
+
+  <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+  <script>
+    let map, marker;
+    let isSatellite = false;
+
+    const tileLayers = {
+      street: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'),
+      satellite: L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+        subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+      })
+    };
+
+    function initMap() {
+      map = L.map('map', {
+        center: [0, 0],
+        zoom: 2,
+        layers: [tileLayers.street]
+      });
+    }
+
+    function toggleMap() {
+      isSatellite = !isSatellite;
+      map.eachLayer(layer => map.removeLayer(layer));
+      map.addLayer(isSatellite ? tileLayers.satellite : tileLayers.street);
+      if (marker) marker.addTo(map);
+    }
+
+    async function saveCarLocation() {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(async pos => {
+          const { latitude, longitude } = pos.coords;
+          await saveToDB({ lat: latitude, lng: longitude });
+          alert("Location saved!");
+        }, () => {
+          alert("Could not get location.");
+        });
+      }
+    }
+
+    async function findCar() {
+      const data = await getFromDB();
+      if (data && data.lat && data.lng) {
+        const coords = [data.lat, data.lng];
+        map.setView(coords, 18);
+        if (marker) map.removeLayer(marker);
+        marker = L.marker(coords).addTo(map).bindPopup("Your Car").openPopup();
+
+        if (data.img) {
+          document.getElementById("carImage").src = data.img;
+        }
+      } else {
+        alert("No saved data found.");
+      }
+    }
+
+    function saveImage(event) {
+      const file = event.target.files[0];
+      const reader = new FileReader();
+      reader.onload = async function (e) {
+        const imgData = e.target.result;
+        const data = await getFromDB();
+        await saveToDB({ ...data, img: imgData });
+        document.getElementById("carImage").src = imgData;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // IndexedDB helpers
+    function openDB() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open("CarLocationDB", 1);
+        request.onupgradeneeded = e => {
+          const db = e.target.result;
+          db.createObjectStore("car", { keyPath: "id" });
+        };
+        request.onsuccess = e => resolve(e.target.result);
+        request.onerror = e => reject(e);
+      });
+    }
+
+    async function saveToDB(data) {
+      const db = await openDB();
+      const tx = db.transaction("car", "readwrite");
+      const store = tx.objectStore("car");
+      store.put({ id: 1, ...data });
+      return tx.complete;
+    }
+
+    async function getFromDB() {
+      const db = await openDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction("car", "readonly");
+        const store = tx.objectStore("car");
+        const request = store.get(1);
+        request.onsuccess = () => resolve(request.result || {});
+        request.onerror = e => reject(e);
+      });
+    }
+
+    window.onload = initMap;
+  </script>
+</body>
+</html>
